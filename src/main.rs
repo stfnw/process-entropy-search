@@ -1,9 +1,3 @@
-// This is a small experiment in probably the dumbest way to search for
-// potential kASLR leaks: periodically search all user-space memory for
-// 8-byte values that look like potential kernel pointers.
-// I expect it to yield lots of false positives and no actual results.
-// For educational purposes only.
-
 use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, File};
@@ -18,8 +12,10 @@ fn main() {
     }
 
     let args = parse_args().unwrap();
-    let predicate = create_predicate().unwrap();
-    search_memory(PATTERN_LENGTH, predicate, args.continuous).unwrap();
+    println!("{:?}", args);
+
+    // let predicate = create_predicate().unwrap();
+    // search_memory(PATTERN_LENGTH, predicate, args.continuous).unwrap();
 }
 
 #[derive(Debug)]
@@ -73,29 +69,53 @@ impl From<(u32, io::Error)> for SearchError {
 }
 
 #[derive(Debug)]
-struct Args {
+struct CliArgs {
+    pid: Option<u32>,
     continuous: bool,
 }
 
-fn parse_args() -> Result<Args> {
+// Yes i know clap exists but I don't want the dependency for now...
+// TODO add usage()
+fn parse_args() -> Result<CliArgs> {
     let args: Vec<String> = std::env::args().collect();
 
     // Default values
-    let mut continuous = false;
+    let mut parsed = CliArgs {
+        pid: None,
+        continuous: false,
+    };
 
-    for arg in args[1..].iter() {
-        match arg.as_ref() {
-            "--continuous" => continuous = true,
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_ref() {
+            "--pid" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(SearchError::CliArgParseError(
+                        "Argument --pid requires parameter".to_string(),
+                    ));
+                }
+
+                parsed.pid = Some(args[i].parse::<u32>().map_err(|_| {
+                    SearchError::CliArgParseError(format!(
+                        "Argument --pid ({}) is not a number",
+                        args[i]
+                    ))
+                })?);
+            }
+            "--continuous" => parsed.continuous = true,
             _ => {
                 return Err(SearchError::CliArgParseError(format!(
                     "Unexpected argument {}",
-                    arg
+                    args[i]
                 )))
             }
         }
+
+        i += 1;
     }
 
-    Ok(Args { continuous })
+    Ok(parsed)
 }
 
 fn create_predicate() -> Result<impl Fn(u64) -> bool> {
