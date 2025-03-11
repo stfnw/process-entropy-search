@@ -4,8 +4,6 @@ use std::fs::{self, File};
 use std::io::{self, BufRead, Read, Seek, SeekFrom};
 use std::path::Path;
 
-const PATTERN_LENGTH: usize = 8; // sizeof(void*)
-
 fn main() {
     if cfg!(not(target_os = "linux")) {
         panic!("This program can only run on Linux!");
@@ -14,8 +12,7 @@ fn main() {
     let args = parse_args().unwrap();
     println!("{:?}", args);
 
-    // let predicate = create_predicate().unwrap();
-    // search_memory(PATTERN_LENGTH, predicate, args.continuous).unwrap();
+    search_memory(args.pid, args.continuous).unwrap();
 }
 
 #[derive(Debug)]
@@ -118,116 +115,83 @@ fn parse_args() -> Result<CliArgs> {
     Ok(parsed)
 }
 
-fn create_predicate() -> Result<impl Fn(u64) -> bool> {
-    // Get start and end of kernel / vmlinux .text section from /proc/kallsysms.
-    // These are exposed through the symbols _text and _etext respectively.
-    // Access to /proc/kallsyms requires root permissions.
-    // sudo grep -w -e _text -e _etext /proc/kallsyms
-
-    let mut vals = Vec::new();
-    for line in
-        io::BufReader::new(File::open("/proc/kallsyms").map_err(SearchError::ProcTraversePidsIo)?)
-            .lines()
-    {
-        let line = line.map_err(SearchError::ProcTraversePidsIo)?;
-        if line.contains("T _text") || line.contains("T _etext") {
-            let val = line
-                .split_whitespace()
-                .next()
-                .ok_or(SearchError::ProcParseLine {
-                    file: "/proc/kallsyms".to_string(),
-                    line: line.clone(),
-                })?;
-            let val = u64::from_str_radix(val, 16).map_err(|e| SearchError::ProcParseInt {
-                file: "/proc/kallsyms".to_string(),
-                val: val.to_string(),
-                err: e,
-            })?;
-            vals.push(val);
-        }
-    }
-
-    if vals.len() != 2 || vals[0] == 0 || vals[1] == 0 {
-        return Err(SearchError::PermissionDeniedKallsyms);
-    }
-
-    let start: u64 = vals[0];
-    let end: u64 = vals[1];
-
-    println!(
-        "Kernel .text section starts at 0x{:016x} and ends at 0x{:016x}",
-        start, end
-    );
-
-    Ok(move |addr: u64| {
-        addr % PATTERN_LENGTH as u64  == 0 // 8-byte-aligned
-        && start <= addr && addr <= end // inside vmlinux .text section
-    })
-}
-
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 struct Match {
+    val: String, // Matched string.
     pid: u32,
     pname: String,
-    uaddr: u64, // Address in userspace.
-    kaddr: u64, // Potential kernel address leak.
-    regiondesc: String,
+    addr: u64, // Address in process memory.
 }
 
 impl fmt::Display for Match {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Found pattern 0x{:016x} in process {:16} with pid {:7} at 0x{:016X} ({})",
-            self.kaddr, self.pname, self.pid, self.uaddr, self.regiondesc
+            "Found string \"{}\" in process {:16} with pid {:7} at 0x{:016X}",
+            self.val, self.pname, self.pid, self.addr
         )
     }
 }
 
-fn search_memory<T: Fn(u64) -> bool>(
-    chunksize: usize,
-    predicate: T,
-    continuous: bool,
-) -> Result<()> {
+fn search_memory(pid: Option<u32>, continuous: bool) -> Result<()> {
     let ownpid = std::process::id();
 
     let mut matches: HashSet<Match> = HashSet::new();
 
     loop {
-        for entry in fs::read_dir(Path::new("/proc")).map_err(SearchError::ProcTraversePidsIo)? {
-            let path = entry.map_err(SearchError::ProcTraversePidsIo)?.path();
+        let pids = {
+            let mut res = Vec::new();
+            match pid {
+                Some(p) => {
+                    if p != ownpid {
+                        res.push(p)
+                    }
+                }
+                None => {
+                    for entry in
+                        fs::read_dir(Path::new("/proc")).map_err(SearchError::ProcTraversePidsIo)?
+                    {
+                        let path = entry.map_err(SearchError::ProcTraversePidsIo)?.path();
 
-            if path.is_dir() {
-                if let Some(pid_) = path.file_name().and_then(|s| s.to_str()) {
-                    if let Ok(pid) = pid_.parse::<u32>() {
-                        // Don't search own process memory.
-                        if pid == ownpid {
-                            continue;
-                        }
-
-                        match search_memory_pid(pid, chunksize, &predicate) {
-                            Ok(ms) => {
-                                for m in ms {
-                                    if continuous {
-                                        if matches.contains(&m) {
-                                            continue;
-                                        } else {
-                                            matches.insert(m.clone());
-                                        }
+                        if path.is_dir() {
+                            if let Some(p_) = path.file_name().and_then(|s| s.to_str()) {
+                                if let Ok(p) = p_.parse::<u32>() {
+                                    // Don't search own process memory.
+                                    if p == ownpid {
+                                        continue;
                                     }
-                                    println!("{}", m);
+
+                                    res.push(p);
                                 }
-                                Ok(())
                             }
-                            Err(SearchError::SearchMemPermissionDeniedPid { pid, err }) => {
-                                println!("PID {}: {:?}", pid, err);
-                                Ok(())
-                            }
-                            Err(e) => Err(e),
-                        }?
+                        }
                     }
                 }
             }
+            res
+        };
+
+        for p in pids.into_iter() {
+            match search_memory_pid(p) {
+                Ok(ms) => {
+                    for m in ms {
+                        if continuous {
+                            if matches.contains(&m) {
+                                continue;
+                            } else {
+                                matches.insert(m.clone());
+                            }
+                        }
+                        println!("{}", m);
+                    }
+                    Ok(())
+                }
+                Err(SearchError::SearchMemPermissionDeniedPid { pid: p, err }) => {
+                    println!("PID {}: {:?}", p, err);
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }?;
         }
 
         if !continuous {
@@ -238,14 +202,15 @@ fn search_memory<T: Fn(u64) -> bool>(
     Ok(())
 }
 
-fn search_memory_pid<T: Fn(u64) -> bool>(
-    pid: u32,
-    chunksize: usize,
-    predicate: T,
-) -> Result<Vec<Match>> {
+fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
+    let minlen = 8; // TODO move to CLI argument
+
     let mut matches = Vec::new();
 
-    let pname = fs::read_to_string(format!("/proc/{pid}/comm")).map_err(|e| (pid, e))?;
+    let pname = fs::read_to_string(format!("/proc/{pid}/comm"))
+        .map_err(|e| (pid, e))?
+        .trim()
+        .to_string();
 
     let regions = read_memory_maps(pid)?;
     let mem_file_path = format!("/proc/{pid}/mem");
@@ -254,13 +219,6 @@ fn search_memory_pid<T: Fn(u64) -> bool>(
     for region in regions {
         // Exclude non-readable memory regions.
         if !region.permissions.contains('r') {
-            continue;
-        }
-
-        // Exclude programs / executable memory regions. This assumes that those do not contain any
-        // interesting addresses; we assume interesting addressess are mostly contained in dynamic
-        // memory (stack or heap). This assumption may be wrong though.
-        if region.permissions.contains('x') && !region.permissions.contains('w') {
             continue;
         }
 
@@ -287,28 +245,24 @@ fn search_memory_pid<T: Fn(u64) -> bool>(
             .map_err(|e| (pid, e))?;
         match mem_file.read_exact(&mut buffer) {
             Ok(_) => {
-                // Note: we iterate in *non-overlapping* windows/chunks,
-                // because pointers are usually 8-byte-aligned.
-                for (pos, chunk) in buffer.chunks_exact(chunksize).enumerate() {
-                    let val = u64::from_le_bytes(chunk.try_into().unwrap());
-                    if predicate(val) {
-                        let m = Match {
-                            pid,
-                            pname: pname.trim().to_string(),
-                            uaddr: region.start + pos as u64,
-                            kaddr: val,
-                            regiondesc: format!(
-                                "{}{}",
-                                region.permissions,
-                                if let Some(ref p) = region.pathname {
-                                    format!(" in region {}", p)
-                                } else {
-                                    String::new()
-                                }
-                            ),
-                        };
-                        matches.push(m);
+                let mut i = 0;
+                while i < buffer.len() {
+                    let start = i;
+                    while i < buffer.len() && is_ascii_printable(buffer[i]) {
+                        i += 1;
                     }
+                    if i - start >= minlen {
+                        let val = std::str::from_utf8(&buffer[start..i]).unwrap().to_string();
+                        println!("TODO {}", val);
+                        matches.push(Match {
+                            val,
+                            pid,
+                            pname: pname.clone(),
+                            addr: region.start + start as u64,
+                        });
+                    }
+
+                    i += 1;
                 }
             }
             Err(e) => {
@@ -318,6 +272,10 @@ fn search_memory_pid<T: Fn(u64) -> bool>(
     }
 
     Ok(matches)
+}
+
+fn is_ascii_printable(b: u8) -> bool {
+    0x20 <= b && b <= 0x7e
 }
 
 #[derive(Debug)]
