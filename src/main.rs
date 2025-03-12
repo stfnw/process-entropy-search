@@ -117,7 +117,7 @@ fn parse_args() -> Result<CliArgs> {
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 struct Match {
-    val: String, // Matched string.
+    val: Vec<u8>,
     pid: u32,
     pname: String,
     addr: u64, // Address in process memory.
@@ -127,9 +127,18 @@ impl fmt::Display for Match {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Found string \"{}\" in process {:16} with pid {:7} at 0x{:016X}",
-            self.val, self.pname, self.pid, self.addr
+            "Found string with entropy {:.4} in process {:16} with pid {:7} at 0x{:016X}: \"{}\" ",
+            calculate_entropy(&self.val),
+            self.pname,
+            self.pid,
+            self.addr,
+            std::str::from_utf8(&self.val).unwrap(),
         )
+        // Note that I don't particularly like doing computations like for
+        // the entropy of the Vec<u8> to String conversion in a function like
+        // Display, which should be cheap to execute. However I chose this
+        // approach over pre-computing the entropy and saving it in the Match
+        // struct, since then Match could not derive Eq (for floats).
     }
 }
 
@@ -252,10 +261,8 @@ fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
                         i += 1;
                     }
                     if i - start >= minlen {
-                        let val = std::str::from_utf8(&buffer[start..i]).unwrap().to_string();
-                        println!("TODO {}", val);
                         matches.push(Match {
-                            val,
+                            val: buffer[start..i].to_vec(),
                             pid,
                             pname: pname.clone(),
                             addr: region.start + start as u64,
@@ -276,6 +283,27 @@ fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
 
 fn is_ascii_printable(b: u8) -> bool {
     0x20 <= b && b <= 0x7e
+}
+
+// Calculate the Shannon Entropy, or at least an approximation thereof since
+// we (probably wrongly) assume a uniform distribution of bytes.
+// Note that since there are only 256 different possibilities / values a single
+// byte can take, the maximum value the entropy can take is log2(256) = 8.0.
+fn calculate_entropy(buf: &[u8]) -> f64 {
+    let mut vals: Vec<u64> = vec![0; 0x100];
+    for b in buf.iter() {
+        vals[*b as usize] += 1;
+    }
+
+    let mut entropy = 0.0;
+    for val in vals.into_iter() {
+        if val > 0 {
+            let p = val as f64 / buf.len() as f64;
+            entropy -= p * f64::log2(p);
+        }
+    }
+
+    entropy
 }
 
 #[derive(Debug)]
