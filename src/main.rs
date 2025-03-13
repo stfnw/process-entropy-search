@@ -115,12 +115,18 @@ fn parse_args() -> Result<CliArgs> {
     Ok(parsed)
 }
 
+const ENTROPY_MULTIPLIER: u64 = 1000000;
+
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 struct Match {
     val: Vec<u8>,
     pid: u32,
     pname: String,
     addr: u64, // Address in process memory.
+    // We save the entropy as fixed precision integer pre-multiplied by
+    // ENTROPY_MULTIPLIER in order to still be able to derive Eq/PartialEq/Hash
+    // for the Match struct.
+    entropy: u64,
 }
 
 impl fmt::Display for Match {
@@ -128,17 +134,12 @@ impl fmt::Display for Match {
         write!(
             f,
             "Found string with entropy {:.4} in process {:16} with pid {:7} at 0x{:016X}: \"{}\" ",
-            calculate_entropy(&self.val),
+            self.entropy as f64 / ENTROPY_MULTIPLIER as f64,
             self.pname,
             self.pid,
             self.addr,
             std::str::from_utf8(&self.val).unwrap(),
         )
-        // Note that I don't particularly like doing computations like for
-        // the entropy of the Vec<u8> to String conversion in a function like
-        // Display, which should be cheap to execute. However I chose this
-        // approach over pre-computing the entropy and saving it in the Match
-        // struct, since then Match could not derive Eq (for floats).
     }
 }
 
@@ -261,11 +262,13 @@ fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
                         i += 1;
                     }
                     if i - start >= minlen {
+                        let buf = &buffer[start..i];
                         matches.push(Match {
-                            val: buffer[start..i].to_vec(),
+                            val: buf.to_vec(),
                             pid,
                             pname: pname.clone(),
                             addr: region.start + start as u64,
+                            entropy: (calculate_entropy(buf) * ENTROPY_MULTIPLIER as f64) as u64,
                         });
                     }
 
