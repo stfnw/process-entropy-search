@@ -214,6 +214,7 @@ fn search_memory(pid: Option<u32>, continuous: bool) -> Result<()> {
 
 fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
     let minlen = 8; // TODO move to CLI argument
+    let entropy_threshold = 6.0; // TODO move to CLI argument
 
     let mut matches = Vec::new();
 
@@ -261,15 +262,20 @@ fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
                     while i < buffer.len() && is_ascii_printable(buffer[i]) {
                         i += 1;
                     }
+
                     if i - start >= minlen {
                         let buf = &buffer[start..i];
-                        matches.push(Match {
-                            val: buf.to_vec(),
-                            pid,
-                            pname: pname.clone(),
-                            addr: region.start + start as u64,
-                            entropy: (calculate_entropy(buf) * ENTROPY_MULTIPLIER as f64) as u64,
-                        });
+                        let entropy = calculate_entropy(buf);
+
+                        if entropy >= entropy_threshold {
+                            matches.push(Match {
+                                val: buf.to_vec(),
+                                pid,
+                                pname: pname.clone(),
+                                addr: region.start + start as u64,
+                                entropy: (entropy * ENTROPY_MULTIPLIER as f64) as u64,
+                            });
+                        }
                     }
 
                     i += 1;
