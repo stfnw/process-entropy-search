@@ -214,7 +214,7 @@ fn search_memory(pid: Option<u32>, continuous: bool) -> Result<()> {
 
 fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
     let minlen = 8; // TODO move to CLI argument
-    let entropy_threshold = 6.0; // TODO move to CLI argument
+    let entropy_threshold = 5.0; // TODO move to CLI argument
 
     let mut matches = Vec::new();
 
@@ -298,6 +298,9 @@ fn is_ascii_printable(b: u8) -> bool {
 // we (probably wrongly) assume a uniform distribution of bytes.
 // Note that since there are only 256 different possibilities / values a single
 // byte can take, the maximum value the entropy can take is log2(256) = 8.0.
+// Strictly taken, since previous filters reduce the range to printable ASCII
+// characters, there are only 0x7e - 0x20 + 1 = 95 possibilities; which leads
+// to a maximum possible entropy of log2(95) = 6.569855608330948.
 fn calculate_entropy(buf: &[u8]) -> f64 {
     let mut vals: Vec<u64> = vec![0; 0x100];
     for b in buf.iter() {
