@@ -1,8 +1,6 @@
-use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufRead, Read, Seek, SeekFrom};
-use std::path::Path;
 
 fn main() {
     if cfg!(not(target_os = "linux")) {
@@ -12,7 +10,7 @@ fn main() {
     let args = parse_args().unwrap();
     println!("{:?}", args);
 
-    search_memory(args.pid, args.continuous).unwrap();
+    search_memory_pid(args.pid).unwrap();
 }
 
 #[derive(Debug)]
@@ -67,8 +65,7 @@ impl From<(u32, io::Error)> for SearchError {
 
 #[derive(Debug)]
 struct CliArgs {
-    pid: Option<u32>,
-    continuous: bool,
+    pid: u32,
 }
 
 // Yes i know clap exists but I don't want the dependency for now...
@@ -77,40 +74,17 @@ fn parse_args() -> Result<CliArgs> {
     let args: Vec<String> = std::env::args().collect();
 
     // Default values
-    let mut parsed = CliArgs {
-        pid: None,
-        continuous: false,
-    };
+    let mut parsed = CliArgs { pid: 0 };
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_ref() {
-            "--pid" => {
-                i += 1;
-                if i >= args.len() {
-                    return Err(SearchError::CliArgParseError(
-                        "Argument --pid requires parameter".to_string(),
-                    ));
-                }
-
-                parsed.pid = Some(args[i].parse::<u32>().map_err(|_| {
-                    SearchError::CliArgParseError(format!(
-                        "Argument --pid ({}) is not a number",
-                        args[i]
-                    ))
-                })?);
-            }
-            "--continuous" => parsed.continuous = true,
-            _ => {
-                return Err(SearchError::CliArgParseError(format!(
-                    "Unexpected argument {}",
-                    args[i]
-                )))
-            }
-        }
-
-        i += 1;
+    if args.len() != 3 || args[1] != "--pid" {
+        return Err(SearchError::CliArgParseError(
+            "Argument --pid is required".to_string(),
+        ));
     }
+
+    parsed.pid = args[2].parse::<u32>().map_err(|_| {
+        SearchError::CliArgParseError(format!("Argument --pid ({}) is not a number", args[2]))
+    })?;
 
     Ok(parsed)
 }
@@ -143,80 +117,9 @@ impl fmt::Display for Match {
     }
 }
 
-fn search_memory(pid: Option<u32>, continuous: bool) -> Result<()> {
-    let ownpid = std::process::id();
-
-    let mut matches: HashSet<Match> = HashSet::new();
-
-    loop {
-        let pids = {
-            let mut res = Vec::new();
-            match pid {
-                Some(p) => {
-                    if p != ownpid {
-                        res.push(p)
-                    }
-                }
-                None => {
-                    for entry in
-                        fs::read_dir(Path::new("/proc")).map_err(SearchError::ProcTraversePidsIo)?
-                    {
-                        let path = entry.map_err(SearchError::ProcTraversePidsIo)?.path();
-
-                        if path.is_dir() {
-                            if let Some(p_) = path.file_name().and_then(|s| s.to_str()) {
-                                if let Ok(p) = p_.parse::<u32>() {
-                                    // Don't search own process memory.
-                                    if p == ownpid {
-                                        continue;
-                                    }
-
-                                    res.push(p);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            res
-        };
-
-        for p in pids.into_iter() {
-            match search_memory_pid(p) {
-                Ok(ms) => {
-                    for m in ms {
-                        if continuous {
-                            if matches.contains(&m) {
-                                continue;
-                            } else {
-                                matches.insert(m.clone());
-                            }
-                        }
-                        println!("{}", m);
-                    }
-                    Ok(())
-                }
-                Err(SearchError::SearchMemPermissionDeniedPid { pid: p, err }) => {
-                    println!("PID {}: {:?}", p, err);
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }?;
-        }
-
-        if !continuous {
-            break;
-        }
-    }
-
-    Ok(())
-}
-
-fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
+fn search_memory_pid(pid: u32) -> Result<()> {
     let minlen = 8; // TODO move to CLI argument
     let entropy_threshold = 5.0; // TODO move to CLI argument
-
-    let mut matches = Vec::new();
 
     let pname = fs::read_to_string(format!("/proc/{pid}/comm"))
         .map_err(|e| (pid, e))?
@@ -268,13 +171,14 @@ fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
                         let entropy = calculate_entropy(buf);
 
                         if entropy >= entropy_threshold {
-                            matches.push(Match {
+                            let m = Match {
                                 val: buf.to_vec(),
                                 pid,
                                 pname: pname.clone(),
                                 addr: region.start + start as u64,
                                 entropy: (entropy * ENTROPY_MULTIPLIER as f64) as u64,
-                            });
+                            };
+                            println!("{}", m);
                         }
                     }
 
@@ -287,7 +191,7 @@ fn search_memory_pid(pid: u32) -> Result<Vec<Match>> {
         }
     }
 
-    Ok(matches)
+    Ok(())
 }
 
 fn is_ascii_printable(b: u8) -> bool {
