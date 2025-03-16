@@ -8,9 +8,9 @@ fn main() {
     }
 
     let args = parse_args().unwrap();
-    println!("{:?}", args);
+    println!("Running with arguments: {:?}", args);
 
-    search_memory_pid(args.pid).unwrap();
+    search_memory_pid(args.pid, args.min_length, args.min_entropy).unwrap();
 }
 
 #[derive(Debug)]
@@ -66,6 +66,8 @@ impl From<(u32, io::Error)> for SearchError {
 #[derive(Debug)]
 struct CliArgs {
     pid: u32,
+    min_length: usize,
+    min_entropy: f64,
 }
 
 // Yes i know clap exists but I don't want the dependency for now...
@@ -74,17 +76,76 @@ fn parse_args() -> Result<CliArgs> {
     let args: Vec<String> = std::env::args().collect();
 
     // Default values
-    let mut parsed = CliArgs { pid: 0 };
+    let mut parsed = CliArgs {
+        pid: 0,
+        min_length: 8,
+        min_entropy: 5.0,
+    };
 
-    if args.len() != 3 || args[1] != "--pid" {
-        return Err(SearchError::CliArgParseError(
-            "Argument --pid is required".to_string(),
-        ));
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_ref() {
+            "--pid" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(SearchError::CliArgParseError(
+                        "Argument --pid requires parameter".to_string(),
+                    ));
+                }
+                parsed.pid = args[i].parse::<u32>().map_err(|_| {
+                    SearchError::CliArgParseError(format!(
+                        "Argument --pid ({}) is not a number",
+                        args[i]
+                    ))
+                })?;
+            }
+
+            "--minlength" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(SearchError::CliArgParseError(
+                        "Argument --minlength requires parameter".to_string(),
+                    ));
+                }
+                parsed.min_length = args[i].parse::<usize>().map_err(|_| {
+                    SearchError::CliArgParseError(format!(
+                        "Argument --minlength ({}) is not a number",
+                        args[i]
+                    ))
+                })?;
+            }
+
+            "--minentropy" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err(SearchError::CliArgParseError(
+                        "Argument --minentropy requires parameter".to_string(),
+                    ));
+                }
+                parsed.min_entropy = args[i].parse::<f64>().map_err(|_| {
+                    SearchError::CliArgParseError(format!(
+                        "Argument --minentropy ({}) is not a number",
+                        args[i]
+                    ))
+                })?;
+            }
+
+            _ => {
+                return Err(SearchError::CliArgParseError(format!(
+                    "Unexpected argument {}",
+                    args[i]
+                )))
+            }
+        }
+
+        if parsed.pid == 0 {
+            return Err(SearchError::CliArgParseError(
+                "Argument --pid is required".to_string(),
+            ));
+        }
+
+        i += 1;
     }
-
-    parsed.pid = args[2].parse::<u32>().map_err(|_| {
-        SearchError::CliArgParseError(format!("Argument --pid ({}) is not a number", args[2]))
-    })?;
 
     Ok(parsed)
 }
@@ -117,10 +178,7 @@ impl fmt::Display for Match {
     }
 }
 
-fn search_memory_pid(pid: u32) -> Result<()> {
-    let minlen = 8; // TODO move to CLI argument
-    let entropy_threshold = 5.0; // TODO move to CLI argument
-
+fn search_memory_pid(pid: u32, min_length: usize, min_entropy: f64) -> Result<()> {
     let pname = fs::read_to_string(format!("/proc/{pid}/comm"))
         .map_err(|e| (pid, e))?
         .trim()
@@ -166,11 +224,11 @@ fn search_memory_pid(pid: u32) -> Result<()> {
                         i += 1;
                     }
 
-                    if i - start >= minlen {
+                    if i - start >= min_length {
                         let buf = &buffer[start..i];
                         let entropy = calculate_entropy(buf);
 
-                        if entropy >= entropy_threshold {
+                        if entropy >= min_entropy {
                             let m = Match {
                                 val: buf.to_vec(),
                                 pid,
