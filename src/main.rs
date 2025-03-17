@@ -17,21 +17,15 @@ fn main() {
 #[allow(dead_code)]
 enum SearchError {
     CliArgParseError(String),
-    ProcTraversePidsIo(io::Error),
     ProcParseInt {
         file: String,
         val: String,
         err: std::num::ParseIntError,
     },
-    ProcParseLine {
-        file: String,
-        line: String,
-    },
     SearchMemIo {
         pid: u32,
         err: io::Error,
     },
-    PermissionDeniedKallsyms,
     SearchMemPermissionDeniedPid {
         pid: u32,
         err: io::Error,
