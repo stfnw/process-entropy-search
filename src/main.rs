@@ -188,6 +188,12 @@ fn search_memory_pid(pid: u32, min_length: usize, min_entropy: f64) -> Result<()
             continue;
         }
 
+        // Exclude non-writable memory regions. (Here we only search for dynamic
+        // values).
+        if !region.permissions.contains('w') {
+            continue;
+        }
+
         // Filter special cases on pathname
         if let Some(p) = &region.pathname {
             // https://lwn.net/Articles/615809/ Implementing virtual system calls.
