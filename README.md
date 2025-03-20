@@ -13,7 +13,26 @@ For example, with the way calculated here, the following entropy values result f
 
 # Usage
 
-TODO
+```
+$ cargo run -- --help
+Running with arguments: CliArgs { help: PrintUsage, pid: 0, min_length: 8, min_entropy: 5.0 }
+Search process memory for high-entropy printable ASCII strings
+
+Usage: process-entropy-search --pid PID [--minlength MINLENGTH] [--minentropy MINENTROPY]
+
+    --pid PID
+          Process ID of the process memory to search
+
+    --minlength MINLENGTH
+          Search only strings with a length >= MINLENGTH
+          Default: MINLENGTH=8
+
+    --minentropy MINENTROPY
+          Search only strings where the entropy is >= MINENTROPY
+          Default: MINENTROPY=5.0
+
+    --help Show this help text
+```
 
 # Demo
 

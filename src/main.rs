@@ -10,6 +10,11 @@ fn main() {
     let args = parse_args().unwrap();
     println!("Running with arguments: {:?}", args);
 
+    if args.help == CliArgHelp::PrintUsage {
+        usage(args);
+        return;
+    }
+
     search_memory_pid(args.pid, args.min_length, args.min_entropy).unwrap();
 }
 
@@ -57,20 +62,27 @@ impl From<(u32, io::Error)> for SearchError {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum CliArgHelp {
+    PrintUsage,
+    NormalOperation,
+}
+
 #[derive(Debug)]
 struct CliArgs {
+    help: CliArgHelp,
     pid: u32,
     min_length: usize,
     min_entropy: f64,
 }
 
 // Yes i know clap exists but I don't want the dependency for now...
-// TODO add usage()
 fn parse_args() -> Result<CliArgs> {
     let args: Vec<String> = std::env::args().collect();
 
     // Default values
     let mut parsed = CliArgs {
+        help: CliArgHelp::NormalOperation,
         pid: 0,
         min_length: 8,
         min_entropy: 5.0,
@@ -79,6 +91,10 @@ fn parse_args() -> Result<CliArgs> {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_ref() {
+            "--help" => {
+                parsed.help = CliArgHelp::PrintUsage;
+                return Ok(parsed);
+            }
             "--pid" => {
                 i += 1;
                 if i >= args.len() {
@@ -132,16 +148,38 @@ fn parse_args() -> Result<CliArgs> {
             }
         }
 
-        if parsed.pid == 0 {
-            return Err(SearchError::CliArgParseError(
-                "Argument --pid is required".to_string(),
-            ));
-        }
-
         i += 1;
     }
 
+    if parsed.pid == 0 {
+        return Err(SearchError::CliArgParseError(
+            "Argument --pid is required".to_string(),
+        ));
+    }
+
     Ok(parsed)
+}
+
+fn usage(args: CliArgs) {
+    println!("Search process memory for high-entropy printable ASCII strings");
+    println!();
+    println!(
+        "Usage: process-entropy-search --pid PID [--minlength MINLENGTH] [--minentropy MINENTROPY]"
+    );
+    println!();
+    println!("    --pid PID");
+    println!("          Process ID of the process memory to search");
+    println!();
+    println!("    --minlength MINLENGTH");
+    println!("          Search only strings with a length >= MINLENGTH");
+    println!("          Default: MINLENGTH={}", args.min_length);
+    println!();
+    println!("    --minentropy MINENTROPY");
+    println!("          Search only strings where the entropy is >= MINENTROPY");
+    println!("          Default: MINENTROPY={:.1}", args.min_entropy);
+    println!();
+    println!("    --help Show this help text");
+    println!();
 }
 
 const ENTROPY_MULTIPLIER: u64 = 1000000;
