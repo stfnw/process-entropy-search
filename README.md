@@ -36,4 +36,19 @@ Usage: process-entropy-search --pid PID [--minlength MINLENGTH] [--minentropy MI
 
 # Demo
 
-TODO
+```
+$ echo '#9vrkf!E"f5H4.9%F$_S' > example.txt
+$ less example.txt
+
+$ cargo run -- --pid $(pgrep less) --minentropy 4.0 | head
+Running with arguments: CliArgs { help: NormalOperation, pid: 5149, min_length: 8, min_entropy: 4.0 }
+Found string with entropy 4.1219 in process less             with pid    5149 at 0x00005A7FF97B1900: "#9vrkf!E"f5H4.9%F$_S"
+Found string with entropy 4.0431 in process less             with pid    5149 at 0x00005A80178B5C80: "tmux-256color|tmux with 256 colors"
+Found string with entropy 5.0000 in process less             with pid    5149 at 0x00005A80178B5EE8: "++,,--..00``aaffgghhiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~"
+Found string with entropy 4.0431 in process less             with pid    5149 at 0x00005A80178B7780: "tmux-256color|tmux with 256 colors"
+Found string with entropy 5.0000 in process less             with pid    5149 at 0x00005A80178B79E7: "++,,--..00``aaffgghhiijjkkllmmnnooppqqrrssttuuvvwwxxyyzz{{||}}~~"
+Found string with entropy 4.1219 in process less             with pid    5149 at 0x00005A80178BA6E0: "#9vrkf!E"f5H4.9%F$_S"
+Found string with entropy 4.0207 in process less             with pid    5149 at 0x00005A80178BBB20: "?n?f%f .?m(%T %i of %m) ..?e(END) ?x- Next\: %x..%t"
+Found string with entropy 4.3324 in process less             with pid    5149 at 0x00005A80178BBB60: "?n?f%f .?m(%T %i of %m) ..?e(END) ?x- Next\: %x.:?pB%pB\%:byte %bB?s/%s...%t"
+Found string with entropy 4.4174 in process less             with pid    5149 at 0x00005A80178BBBC0: "?f%f .?n?m(%T %i of %m) ..?ltlines %lt-%lb?L/%L. :byte %bB?s/%s. .?e(END) ?x- Next\: %x.:?pB%pB\%..%t"
+```
